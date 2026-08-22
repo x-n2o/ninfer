@@ -454,20 +454,42 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
 }
 
 void GenerationService::warmup() {
-    GenerationRequest request;
-    ChatTurn turn;
-    turn.role = ChatRole::User;
-    ContentPart content;
-    content.kind     = ContentKind::Text;
-    content.text     = "hi";
-    content.type_raw = "text";
-    turn.content.push_back(std::move(content));
-    request.messages.push_back(std::move(turn));
-    request.max_tokens = 4;
-    PreparedRequest prepared =
-        prepare_impl(request, GenerationConsumerMode::Aggregate, {}, {}, {},
-                     CacheParticipation::Disabled, DeadlinePolicy::UnboundedStartup);
-    run(prepared, nullptr);
-}
+    try {
+        GenerationRequest request;
+        ChatTurn turn;
+        turn.role = ChatRole::User;
+        ContentPart content;
+        content.kind     = ContentKind::Text;
+        content.text     = "hi";
+        content.type_raw = "text";
+        turn.content.push_back(std::move(content));
+        request.messages.push_back(std::move(turn));
+        request.max_tokens     = 4;
+        request.max_tokens_set = true;
+        // Warmup is internal startup priming and must not inherit the client-facing request
+        // deadline: --pending-timeout-ms bounds incoming-request preparation and queue waiting,
+        // not warmup.
+        constexpr auto kWarmupTimeout = std::chrono::seconds(60);
+        PreparedRequest prepared      = prepare(request, {}, kWarmupTimeout);
+        run(prepared, nullptr);
+    } catch (const ApiException& exception) {
+        // Every ninfer::RequestError escaping prepare()/run() has already been converted to an
+        // ApiException by throw_request_error, so the queue-timeout carve-out has to
+        // discriminate on the mapped error code -- catching ninfer::RequestError here would be
+        // dead code (it derives from std::invalid_argument, ApiException from
+        // std::runtime_error, so neither catches the other).
+        //
+        // A queue timeout is the one warmup failure that is not a server fault: the engine can
+        // still be draining an earlier admission when priming runs. Everything else is fatal.
+        if (exception.error().code == "request_queue_timeout") {
+            write_console_log(ConsoleLogLevel::Warning,
+                              "warmup timed out waiting for admission (non-fatal for warmup); "
+                              "server ready");
+            return;
+        }
+        throw std::runtime_error(std::string("warmup generation failed: ") + exception.what());
+    } catch (const std::exception& exception) {
+        throw std::runtime_error(std::string("warmup generation failed: ") + exception.what());
+    }}
 
 } // namespace ninfer::serve
