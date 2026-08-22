@@ -217,6 +217,9 @@ not promise that the model will emit nonempty content or a tool call after the m
 For Chat Completions, `reasoning_effort: "none"` disables thinking. `low`, `medium`, and `xhigh`
 select the corresponding template effort when available. The other OpenAI protocol values
 `minimal`, `high`, and `max` are parsed but rejected when the loaded template does not expose them.
+Starting the server with `--chat-style sharp-v22.1` exposes the full seven-level ladder: `minimal`
+maps onto the low instruction block, `high` and `max` onto the xhigh block, and the default effort
+drops from `xhigh` to `medium`.
 `enable_thinking` controls the same new-turn thinking switch; a contradictory combination with
 `reasoning_effort` returns `conflicting_template_option`.
 
@@ -413,7 +416,7 @@ wire response contains typed `output` Items.
 | `top_p` | finite number in `[0,1]` |
 | `metadata` | at most 16 string pairs; keys at most 64 characters and values at most 512 |
 | `client_metadata` | Codex client extension; an object or `null`, accepted as opaque tracing metadata with no generation effect |
-| `reasoning.effort` | `none` disables thinking; `low`, `medium`, or `xhigh` selects an effort exposed by the loaded chat template; `minimal`, `high`, and `max` return `reasoning_effort_not_supported` for the registered templates |
+| `reasoning.effort` | `none` disables thinking; `low`, `medium`, or `xhigh` selects an effort exposed by the loaded chat template; `minimal`, `high`, and `max` return `reasoning_effort_not_supported` unless the server runs with `--chat-style sharp-v22.1` |
 | `chat_template_kwargs.preserve_thinking` | optional boolean controlling whether closed-turn reasoning remains in reconstructed prompts |
 | `preserve_thinking` | top-level alias for the same option; conflicting values are rejected |
 | `text.format` | omitted or `{"type":"text"}` only |
@@ -794,6 +797,7 @@ The table lists executable defaults. The startup example selects a long-context 
 | `--no-thinking` | disable thinking by default | thinking on |
 | `--preserve-thinking` | preserve closed-turn assistant reasoning by default | off |
 | `--cors` | permissive browser CORS headers | off |
+| `--chat-style default\|sharp-v22.1` | prompt-rendering overlay, fixed at load for every request | `default` |
 | `--temperature F` | process-level temperature override | unset |
 | `--top-p F` | process-level top-p override | unset |
 | `--top-k N` | process-level top-k override (`0..20`; zero selects the top-20 cap) | unset |
