@@ -148,6 +148,15 @@ struct ContextCostOptions {
     std::filesystem::path preset_path;
 };
 
+// Prompt-rendering style overlay. `Default` reproduces the artifact's own chat
+// template byte-for-byte. `SharpV22_1` layers Sharp v22.1's terseness block and
+// reasoning-effort mapping on top of it as compiled C++, leaving the signed
+// artifact (and its embedded template hash) untouched.
+enum class ChatStyle : std::uint8_t {
+    Default,
+    SharpV22_1,
+};
+
 struct EngineOptions {
     std::filesystem::path artifact_path;
     EnginePurpose purpose              = EnginePurpose::Generation;
@@ -166,6 +175,7 @@ struct EngineOptions {
     std::uint32_t media_preprocess_threads = 0;
     bool enable_vision                     = false;
     bool use_cuda_graph                    = true;
+    ChatStyle chat_style                   = ChatStyle::Default;
     ContextCacheOptions context_cache;
     ContextCostOptions context_cost;
     StartupObserver startup_observer;
@@ -366,26 +376,47 @@ struct ChatMessage {
     std::string tool_call_id;
 };
 
+// Seven-level ladder. `None` means "no thinking at all" and is rendered as a
+// closed, empty thinking block rather than a reasoning instruction; the middle
+// rungs are collapsed onto the instructions the loaded template actually
+// carries (see resolve_*_reasoning_instructions in the qwen3_6 frontend).
 enum class ReasoningEffort : std::uint8_t {
+    None,
+    Minimal,
     Low,
     Medium,
+    High,
     XHigh,
+    Max,
 };
 
 struct ReasoningEffortCapabilities {
-    bool low    = false;
-    bool medium = false;
-    bool xhigh  = false;
+    bool minimal = false;
+    bool low     = false;
+    bool medium  = false;
+    bool high    = false;
+    bool xhigh   = false;
+    bool max     = false;
     std::optional<ReasoningEffort> default_effort;
 
     [[nodiscard]] constexpr bool supports(ReasoningEffort effort) const noexcept {
         switch (effort) {
+        case ReasoningEffort::None:
+            // `None` carries no reasoning instruction; whether thinking may be turned off is
+            // gated by PromptCapabilities::enable_thinking before this point.
+            return true;
+        case ReasoningEffort::Minimal:
+            return minimal;
         case ReasoningEffort::Low:
             return low;
         case ReasoningEffort::Medium:
             return medium;
+        case ReasoningEffort::High:
+            return high;
         case ReasoningEffort::XHigh:
             return xhigh;
+        case ReasoningEffort::Max:
+            return max;
         }
         return false;
     }
