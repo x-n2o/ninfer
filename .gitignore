@@ -65,3 +65,6 @@ profiles/
 
 # Claude Code local session state (worktrees, settings)
 .claude/
+
+# Container deployment (local secrets)
+.env

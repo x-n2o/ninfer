@@ -176,25 +176,128 @@ Vision; it accelerates generated-text decode after multimodal prefill, not Visio
 
 ## Docker
 
-Build the runtime image on a host with the NVIDIA Container Toolkit:
-
+Build the runtime image on a 64-bit Linux host with an RTX 5090, a CUDA 13.3-compatible NVIDIA
+driver, Docker, and the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+Pass `--build-arg CUDA_VERSION=13.2.1` (or `13.1.2`) to build against an older toolkit.
 ```bash
 docker build --tag ninfer:local .
 ```
 
-Mount the downloaded model and run the same example server profile:
+A command given after the image name runs verbatim, as in the examples below. With no arguments the
+image starts a production serving profile on port 11434 instead; see
+[Deployment](docs/deployment.md) for that profile and its `docker compose up -d` quick start.
 
+Download a model into `models/` as described below, then run the HTTP server:
 ```bash
 docker run --rm \
   --gpus '"device=0"' \
   --publish 8080:8080 \
   --volume "$PWD/models:/models:ro" \
   ninfer:local \
-  ninfer-serve /models/qwen3_8_27b_nvfp4.ninfer \
-  --host 0.0.0.0 \
-  --max-context 240000 \
-  --kv-capacity 240000 \
-  --max-concurrency 2 \
+  ninfer-serve /models/qwen3_6_27b.ninfer \
+  --host 0.0.0.0
+```
+
+The image's `HEALTHCHECK` probes `$NINFER_PORT`, defaulting to 11434, so an explicit-command run on
+another port reports `unhealthy` in `docker ps`. That is cosmetic for ad-hoc `--rm` runs.
+
+Run the CLI from the same image:
+
+```bash
+docker run --rm \
+  --gpus '"device=0"' \
+  --volume "$PWD/models:/models:ro" \
+  ninfer:local \
+  ninfer /models/qwen3_6_27b.ninfer \
+  --prompt "Explain prefill and decode in three sentences." \
+  --max-new 256
+```
+
+## Download a model
+
+Use the Hugging Face CLI to download one of the registered artifacts:
+
+```bash
+hf download neroued/Qwen3.6-27B-NInfer \
+  qwen3_6_27b.ninfer \
+  --local-dir models
+
+# Or the 27B NVFP4 weight variant:
+hf download neroued/Qwen3.6-27B-nvfp4-NInfer \
+  qwen3_6_27b_nvfp4.ninfer \
+  --local-dir models
+
+# Or Qwen3.8-27B:
+hf download neroued/Qwen3.8-27B-NInfer \
+  qwen3_8_27b.ninfer \
+  --local-dir models
+
+# Or Qwen3.8-27B NVFP4:
+hf download neroued/Qwen3.8-27B-nvfp4-NInfer \
+  qwen3_8_27b_nvfp4.ninfer \
+  --local-dir models
+
+# Or:
+hf download neroued/Qwen3.6-35B-A3B-NInfer \
+  qwen3_6_35b_a3b.ninfer \
+  --local-dir models
+```
+
+Current NInfer builds accept only the version-2 artifact container, and all five downloads above
+are version 2. Migration applies only to Qwen3.6 artifacts downloaded before their version-2
+publication; both Qwen3.8-27B profiles were published directly as version 2. Migrate an older exact
+local file in place:
+
+```bash
+python3 -m tools.artifact.migrate_v1_to_v2 models/qwen3_6_27b.ninfer
+```
+
+Use the same command with `qwen3_6_27b_nvfp4.ninfer` or `qwen3_6_35b_a3b.ninfer` for those
+artifacts. The migration updates only container metadata; it does not rewrite the weight payload.
+Alternatively, download the current version-2 file again from its Hugging Face repository.
+
+Each `.ninfer` file contains the weights and frontend resources needed by NInfer. It is not a
+Transformers checkpoint, Safetensors distribution, or GGUF file.
+
+Each artifact is complete, while GPU residency is fixed at process startup. Speculative decoding is
+disabled by default, so MTP/DFlash state and the optimized proposal head are not uploaded.
+Vision is also disabled by default, so its weights, Vision scratch phase, and frozen
+request-transient allocation are omitted. Add `--vision` to the CLI or server process that must
+accept image or video input. Disabled capabilities cannot be enabled by a later request. DFlash is
+available only for the 35B-A3B target and is text-only.
+
+## Run the CLI
+
+```bash
+./build/apps/ninfer models/qwen3_6_27b.ninfer \
+  --prompt "Explain prefill and decode in three sentences." \
+  --max-context 16384 \
+  --max-new 256 \
+  --spec mtp --draft-tokens 3 \
+  --lm-head-draft
+```
+
+Use `--messages FILE` instead of `--prompt` for chat history, images, or videos:
+
+```bash
+./build/apps/ninfer models/qwen3_6_27b.ninfer \
+  --messages examples/cli/messages/image_chart.json \
+  --max-context 8192 \
+  --max-new 128 \
+  --vision
+```
+
+Answer content is written to stdout. Loading progress, reasoning, timing, throughput, memory, and
+speculative-decoding statistics are written to stderr. See the [CLI guide](docs/cli.md) and
+[committed examples](examples/cli/) for structured input and runtime options.
+
+## Run the HTTP server
+
+```bash
+./build/apps/ninfer-serve models/qwen3_6_27b.ninfer \
+  --max-context 16384 \
+  --kv-capacity auto \  --max-concurrency 2 \
   --kv-dtype fp8 \
   --device-state-slots 2 \
   --host-state-slots 8 \
@@ -307,10 +410,7 @@ capacities remain fixed for the process lifetime.
 - [CLI](docs/cli.md)
 - [HTTP serving](docs/serving.md)
 - [Performance](docs/performance.md)
-- [Perplexity evaluation](docs/perplexity.md)
-- [Resource scheduling and context cache](docs/maintainer/resource-scheduling-and-context-cache.md)
-- [Serve TTFT benchmark](tools/bench/ttft/)
-- [CLI examples](examples/cli/)
+- [Deployment](docs/deployment.md)- [CLI examples](examples/cli/)
 - [Contributing](CONTRIBUTING.md)
 
 Run the relevant `--help` for the exact current option contract.
