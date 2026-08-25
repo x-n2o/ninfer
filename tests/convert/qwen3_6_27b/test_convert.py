@@ -20,11 +20,13 @@ from tools.convert.qwen3_6_27b import convert, inventory, recipe
 
 
 def test_official_config_uses_only_nested_mtp_field():
-    model = os.environ.get("NINFER_QWEN3_6_27B_MODEL")
-    if not model:
-        pytest.skip("NINFER_QWEN3_6_27B_MODEL is not set")
-    config = json.loads((Path(model) / "config.json").read_text())
+    model_dir = Path(os.environ.get("NINFER_QWEN3_6_27B_MODEL", ""))
+    if not (model_dir / "config.json").is_file():
+        pytest.skip(
+            "NINFER_QWEN3_6_27B_MODEL does not point at the Qwen3.6-27B base-hf-bf16 source"
+        )
 
+    config = json.loads((model_dir / "config.json").read_text())
     assert "mtp_num_hidden_layers" not in config
     summary = convert.validate_config(config)
     assert summary["mtp_num_hidden_layers"] == 1
