@@ -91,8 +91,7 @@ const fi::CompiledChatTemplate& reasoning_effort_template() {
 }
 
 std::filesystem::path official_model_dir() {
-    if (const char* env = std::getenv("NINFER_QWEN3_6_27B_MODEL");
-        env != nullptr && *env != '\0') {
+    if (const char* env = std::getenv("NINFER_QWEN3_6_27B_MODEL"); env != nullptr && *env != '\0') {
         return std::filesystem::path(env);
     }
     return std::filesystem::path();
@@ -106,9 +105,8 @@ bool official_model_available() {
 }
 
 const fi::Tokenizer& official_tokenizer() {
-    const std::filesystem::path dir = official_model_dir();
-    static const std::string tokenizer_json =
-        read_file((dir / "tokenizer.json").c_str());
+    const std::filesystem::path dir         = official_model_dir();
+    static const std::string tokenizer_json = read_file((dir / "tokenizer.json").c_str());
     static const std::string tokenizer_config_json =
         read_file((dir / "tokenizer_config.json").c_str());
     static const std::string generation_config_json =
@@ -429,7 +427,7 @@ int test_official_chat_template() {
     return failures;
 }
 
-int test_ordered_instruction_turns() {
+int test_ordered_instruction_turns(const bool official) {
     fi::ChatRenderOptions no_generation;
     no_generation.add_generation_prompt = false;
 
@@ -467,12 +465,14 @@ int test_ordered_instruction_turns() {
                           appended_diagnostics.substr(stable_history.size()) ==
                               "<|im_start|>system\ncurrent diagnostics<|im_end|>\n",
                       "appended diagnostics changed the stable serialized history prefix");
-    const std::vector<int> stable_tokens   = official_tokenizer().encode(stable_history);
-    const std::vector<int> appended_tokens = official_tokenizer().encode(appended_diagnostics);
-    failures +=
-        check(appended_tokens.size() > stable_tokens.size() &&
-                  std::equal(stable_tokens.begin(), stable_tokens.end(), appended_tokens.begin()),
-              "appended diagnostics changed the stable token prefix");
+    if (official) {
+        const std::vector<int> stable_tokens   = official_tokenizer().encode(stable_history);
+        const std::vector<int> appended_tokens = official_tokenizer().encode(appended_diagnostics);
+        failures += check(
+            appended_tokens.size() > stable_tokens.size() &&
+                std::equal(stable_tokens.begin(), stable_tokens.end(), appended_tokens.begin()),
+            "appended diagnostics changed the stable token prefix");
+    }
 
     fi::ChatRenderOptions tools = no_generation;
     tools.tool_jsons.push_back(
@@ -867,7 +867,7 @@ int test_text_and_image_prepare(const Frontend& frontend) {
     return failures;
 }
 
-int test_media_admission_uses_aggregate_resources(const Frontend& frontend) {
+int test_media_admission_uses_aggregate_resources(const Frontend& frontend, const bool official) {
     constexpr std::size_t kMediaItems     = 17;
     const std::vector<std::uint8_t> bytes = gradient_ppm();
     ninfer::ChatMessage message;
@@ -892,24 +892,27 @@ int test_media_admission_uses_aggregate_resources(const Frontend& frontend) {
                                     data.vision_items.size() == kMediaItems,
                                 "frontend retained an item-count admission limit");
 
-    fi::ProcessorOptions options;
-    options.max_encoded_media_bytes = bytes.size() * 2 - 1;
-    auto cache = std::make_shared<fi::MediaPreprocessCache>(ninfer::kDefaultMediaCacheBytes,
-                                                            ninfer::kDefaultMediaLiveBytes);
-    fi::Processor processor(official_tokenizer(), thinking_toggle_template(), options,
-                            std::move(cache));
-    fi::ChatMessage internal_message;
-    internal_message.role = ninfer::ChatRole::User;
-    for (std::size_t index = 0; index < 2; ++index) {
-        internal_message.parts.push_back(
-            fi::ChatPart::image(fi::MediaData{.bytes       = bytes,
-                                              .media_type  = "image/x-portable-pixmap",
-                                              .source_name = "byte-budget.ppm"}));
+    if (official) {
+        fi::ProcessorOptions options;
+        options.max_encoded_media_bytes = bytes.size() * 2 - 1;
+        auto cache = std::make_shared<fi::MediaPreprocessCache>(ninfer::kDefaultMediaCacheBytes,
+                                                                ninfer::kDefaultMediaLiveBytes);
+        fi::Processor processor(official_tokenizer(), thinking_toggle_template(), options,
+                                std::move(cache));
+        fi::ChatMessage internal_message;
+        internal_message.role = ninfer::ChatRole::User;
+        for (std::size_t index = 0; index < 2; ++index) {
+            internal_message.parts.push_back(
+                fi::ChatPart::image(fi::MediaData{.bytes       = bytes,
+                                                  .media_type  = "image/x-portable-pixmap",
+                                                  .source_name = "byte-budget.ppm"}));
+        }
+        failures +=
+            check(throws_processor_budget([&] {
+                      (void)processor.process(std::vector<fi::ChatMessage>{internal_message});
+                  }),
+                  "processor did not enforce the aggregate encoded-media byte budget");
     }
-    failures += check(throws_processor_budget([&] {
-                          (void)processor.process(std::vector<fi::ChatMessage>{internal_message});
-                      }),
-                      "processor did not enforce the aggregate encoded-media byte budget");
     return failures;
 }
 
@@ -1334,12 +1337,12 @@ int main() {
     failures += official ? test_official_tokenizer_merge() : 0;
     failures += official ? test_repeated_special_tokens_scan_linearly() : 0;
     failures += test_official_chat_template();
-    failures += official ? test_ordered_instruction_turns() : 0;
+    failures += test_ordered_instruction_turns(official);
     failures += test_reasoning_effort_chat_template();
     failures += test_rewrite_checkpoint_trace();
     failures += test_official_resource_guards();
     failures += test_text_and_image_prepare(frontend);
-    failures += official ? test_media_admission_uses_aggregate_resources(frontend) : 0;
+    failures += test_media_admission_uses_aggregate_resources(frontend, official);
     failures += test_multimodal_prompt_over_removed_32k_cap(frontend);
     failures += test_attention_pairs_are_diagnostic(frontend);
     failures += test_video_prepare(frontend);
